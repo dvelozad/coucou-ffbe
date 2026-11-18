@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  animForState, characterSetting, frameIndex, parseSpriteSet, spriteRect,
+  animForState, characterSetting, frameIndex, parseSpriteSet, spriteAnimates, spriteRect,
 } from "../src/mochi/sprite.ts";
 
 const anim = (sheet, frameW, frameH, count, fps) => ({ sheet, frameW, frameH, count, fps });
@@ -41,8 +41,8 @@ const JSON_ = {
 test("every state maps to its animation", () => {
   const want = {
     idle: "idle", dizzy: "idle",
-    working: "atk", thinking: "atk", searching: "atk", approval: "atk", question: "atk",
-    ratelimit: "atk", waiting: "atk",
+    working: "atk", thinking: "atk", searching: "atk", ratelimit: "atk", waiting: "atk",
+    approval: "magic_atk", question: "magic_atk",
     finished: "win", done: "win", celebrate: "win",
     error: "dead", sleeping: "dead", asleep: "dead",
   };
@@ -176,4 +176,51 @@ test("the character setting reads unknown values as mochi", () => {
   for (const v of ["sprite", "mochi", undefined, null, "", "ffbe", 1, {}]) {
     assert.equal(characterSetting(v), "sprite");
   }
+});
+
+// ── Blocked looks unlike working; idle keeps moving ──────────────────────────
+
+test("blocked plays a different strip from working when the character has one", () => {
+  const full = { idle: {}, atk: {}, magic_atk: {}, limit_atk: {}, win: {}, dead: {} };
+  assert.equal(animForState("working", full), "atk");
+  assert.equal(animForState("approval", full), "magic_atk");
+  assert.notEqual(animForState("approval", full), animForState("working", full));
+  assert.equal(animForState("approval", { idle: {}, atk: {}, limit_atk: {} }), "limit_atk");
+  assert.equal(animForState("approval", { idle: {}, atk: {} }), "atk");
+  assert.equal(animForState("approval", { idle: {} }), "idle");
+});
+
+test("limit_atk is only kept (and fetched) when there is no magic_atk", () => {
+  const j = structuredClone(JSON_);
+  j.characters[0].animations.limit_atk = anim("limit_atk.png", 1778, 1705, 8, 12);
+  assert.equal(parseSpriteSet(API, j).anims.limit_atk, undefined);
+  delete j.characters[0].animations.magic_atk;
+  const set = parseSpriteSet(API, j);
+  assert.equal(set.anims.limit_atk.url, "http://127.0.0.1:8811/static/companion/cloud%20ac/limit_atk.png");
+  assert.equal(animForState("approval", set.anims), "limit_atk");
+});
+
+test("every state the island uses animates, except a one-frame strip", () => {
+  const set = parseSpriteSet(API, JSON_);
+  for (const s of ["idle", "working", "approval", "finished"]) assert.ok(spriteAnimates(set, s), s);
+  assert.equal(spriteAnimates(set, "error"), false, "dead is a single frame");
+});
+
+test("the engine draws the strip of its state, and stays busy while it plays", async () => {
+  const { BotEngine } = await import("../src/mochi/engine.ts");
+  const set = parseSpriteSet(API, JSON_);
+  for (const [name, a] of Object.entries(set.anims)) a.image = { name };
+  const drawn = [];
+  const ctx = { imageSmoothingEnabled: true, drawImage: (img) => drawn.push(img.name) };
+  const engine = new BotEngine();
+  engine.sprite = set;
+  const want = { idle: "idle", working: "atk", approval: "magic_atk", finished: "win", error: "dead" };
+  for (const [state, strip] of Object.entries(want)) {
+    engine.setState(state);
+    engine.draw(ctx, 100, 100);
+    assert.equal(drawn.at(-1), strip, state);
+  }
+  engine.setState("idle");
+  assert.equal(engine.busy, true, "idle has 4 frames: the loop keeps running");
+  engine.sprite = null;
 });

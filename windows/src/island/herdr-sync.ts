@@ -45,6 +45,18 @@ export interface HerdrSession {
   state: BotStateName;
   sessionId: string | null;
   cwd: string | null;
+  /** The workspace id ("w2"), from the pane id when herdr does not say. */
+  workspace: string;
+  /** Its label from `herdr workspace list` ("EMAIL"), else the id. */
+  workspaceLabel: string;
+}
+
+/** One workspace from `herdr workspace list`. */
+export interface HerdrWorkspace {
+  id: string;
+  label: string;
+  number: number;
+  focused: boolean;
 }
 
 type Obj = Record<string, unknown>;
@@ -58,12 +70,35 @@ function listOf(value: unknown, key: string): Obj[] | null {
   return Array.isArray(list) ? list.filter(isObj) : null;
 }
 
+/** `herdr workspace list` → its workspaces; [] when unreadable. */
+export function herdrWorkspaces(value: unknown): HerdrWorkspace[] {
+  const out: HerdrWorkspace[] = [];
+  for (const w of listOf(value, "workspaces") ?? []) {
+    const id = str(w.workspace_id);
+    if (!id) continue;
+    out.push({
+      id,
+      label: str(w.label) ?? id,
+      number: typeof w.number === "number" && Number.isFinite(w.number) ? w.number : workspaceNumber(id),
+      focused: w.focused === true,
+    });
+  }
+  return out;
+}
+
+/** "w12" → 12; anything else sorts last. */
+export function workspaceNumber(id: string): number {
+  const m = /^w(\d+)$/.exec(id);
+  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+}
+
 /**
  * The agent sessions herdr reports, one per pane that hosts an agent. Null
  * when the pane list is unreadable (then nothing must change). The agent list
  * is optional: it adds a name and the freshest status when it has the pane.
+ * The workspace list is optional too: it only names the workspaces.
  */
-export function herdrSessions(panes: unknown, agents: unknown): HerdrSession[] | null {
+export function herdrSessions(panes: unknown, agents: unknown, workspaces?: unknown): HerdrSession[] | null {
   const paneList = listOf(panes, "panes");
   if (!paneList) return null;
   const byPane = new Map<string, Obj>();
@@ -71,6 +106,7 @@ export function herdrSessions(panes: unknown, agents: unknown): HerdrSession[] |
     const id = str(a.pane_id);
     if (id) byPane.set(id, a);
   }
+  const labels = new Map(herdrWorkspaces(workspaces).map((w) => [w.id, w.label]));
   const out: HerdrSession[] = [];
   const seen = new Set<string>();
   for (const p of paneList) {
@@ -80,6 +116,7 @@ export function herdrSessions(panes: unknown, agents: unknown): HerdrSession[] |
     const agent = str(a?.agent) ?? str(p.agent);
     if (!agent) continue;
     seen.add(pane);
+    const workspace = str(p.workspace_id) ?? pane.split(":")[0];
     const session = isObj(a?.agent_session) ? a.agent_session : isObj(p.agent_session) ? p.agent_session : null;
     const name = str(a?.name) ?? str(p.label) ?? str(p.terminal_title_stripped) ?? agent;
     out.push({
@@ -89,6 +126,8 @@ export function herdrSessions(panes: unknown, agents: unknown): HerdrSession[] |
       state: herdrState(a?.agent_status ?? p.agent_status),
       sessionId: str(session?.value),
       cwd: str(p.cwd) ?? str(a?.cwd),
+      workspace,
+      workspaceLabel: labels.get(workspace) ?? workspace,
     });
   }
   return out;
@@ -106,6 +145,8 @@ function newTask(s: HerdrSession): AgentTask {
     isIntegration: false,
     sessionId: s.sessionId,
     sessionCwd: s.cwd,
+    workspace: s.workspace,
+    workspaceLabel: s.workspaceLabel,
   };
 }
 
@@ -119,10 +160,10 @@ function newTask(s: HerdrSession): AgentTask {
  *   the pane id as sessionId) is not duplicated, and a herdr task for it goes;
  * - a herdr task whose pane is gone (or no longer hosts an agent) goes;
  * - tasks from any other source are returned as they are, in place.
- * Unreadable `panes` returns `tasks` itself.
+ * Unreadable `panes` returns `tasks` itself. `workspaces` only names them.
  */
-export function reconcile(tasks: AgentTask[], panes: unknown, agents: unknown): AgentTask[] {
-  const sessions = herdrSessions(panes, agents);
+export function reconcile(tasks: AgentTask[], panes: unknown, agents: unknown, workspaces?: unknown): AgentTask[] {
+  const sessions = herdrSessions(panes, agents, workspaces);
   if (!sessions) return tasks;
   const hooked = new Set<string>();
   for (const t of tasks) if (t.source !== "herdr" && t.sessionId) hooked.add(t.sessionId);
@@ -144,8 +185,11 @@ export function reconcile(tasks: AgentTask[], panes: unknown, agents: unknown): 
     const sessionId = s.sessionId ?? t.sessionId ?? null;
     const cwd = s.cwd ?? t.sessionCwd ?? null;
     const same = t.name === s.name && t.state === s.state && (t.sessionId ?? null) === sessionId
-      && (t.sessionCwd ?? null) === cwd;
-    out.push(same ? t : { ...t, name: s.name, state: s.state, sessionId, sessionCwd: cwd });
+      && (t.sessionCwd ?? null) === cwd && t.workspace === s.workspace && t.workspaceLabel === s.workspaceLabel;
+    out.push(same ? t : {
+      ...t, name: s.name, state: s.state, sessionId, sessionCwd: cwd,
+      workspace: s.workspace, workspaceLabel: s.workspaceLabel,
+    });
   }
   for (const s of live.values()) out.push(newTask(s));
   return out;
@@ -155,16 +199,34 @@ export function reconcile(tasks: AgentTask[], panes: unknown, agents: unknown): 
 
 let timer: number | null = null;
 let busy = false;
+let workspaceList: HerdrWorkspace[] = [];
+let workspaceKey = "";
+
+/** The workspaces as herdr last listed them (number, focus), for ordering the pills. */
+export function herdrWorkspaceList(): readonly HerdrWorkspace[] {
+  return workspaceList;
+}
 
 async function tick() {
   if (busy || State.paused) return;
   busy = true;
   try {
-    const [panes, agents] = await Promise.all([Bridge.herdrPanes(), Bridge.herdrAgents()]);
+    const [panes, agents, workspaces] = await Promise.all([
+      Bridge.herdrPanes(), Bridge.herdrAgents(), Bridge.herdrWorkspaces(),
+    ]);
     if (panes == null) return;
+    const list = herdrWorkspaces(workspaces);
+    const key = JSON.stringify(list);
+    const metaChanged = key !== workspaceKey;
+    workspaceList = list;
+    workspaceKey = key;
     const before = State.tasks;
-    const next = reconcile(before, panes, agents);
-    if (next.length === before.length && next.every((t, i) => t === before[i])) return;
+    const next = reconcile(before, panes, agents, workspaces);
+    if (next.length === before.length && next.every((t, i) => t === before[i])) {
+      // Only the workspaces moved (focus, order): the pill row still regroups.
+      if (metaChanged) State.notify();
+      return;
+    }
     const kept = new Set(next.map((t) => t.id));
     State.tasks = next;
     for (const t of before) {

@@ -518,6 +518,12 @@ async fn herdr_panes() -> Option<serde_json::Value> {
     tauri::async_runtime::spawn_blocking(herdr::panes).await.ok()?.ok()
 }
 
+/// herdr's workspaces (labels, numbers), or null when herdr is absent or fails.
+#[tauri::command]
+async fn herdr_workspaces() -> Option<serde_json::Value> {
+    tauri::async_runtime::spawn_blocking(herdr::workspaces).await.ok()?.ok()
+}
+
 /// herdr's agents, or null when herdr is absent or fails.
 #[tauri::command]
 async fn herdr_agents() -> Option<serde_json::Value> {
@@ -993,6 +999,7 @@ pub fn run() {
             codex_plan_usage,
             herdr_panes,
             herdr_agents,
+            herdr_workspaces,
             herdr_send,
             herdr_keys,
             herdr_close,

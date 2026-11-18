@@ -334,6 +334,8 @@ export const Bridge = {
   herdrPanes: () => call<unknown>("herdr_panes"),
   /** `herdr agent list`, or null. */
   herdrAgents: () => call<unknown>("herdr_agents"),
+  /** `herdr workspace list` (labels, numbers, focus), or null. */
+  herdrWorkspaces: () => call<unknown>("herdr_workspaces"),
   // The herdr actions below throw with herdr's own message, shown in the card.
   /** Types a line into a herdr pane, then Enter. Only from an explicit click. */
   herdrSend: (pane: string, text: string) => callOrThrow<unknown>("herdr_send", { pane, text }),

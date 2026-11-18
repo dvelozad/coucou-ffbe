@@ -240,6 +240,11 @@ pub fn agents() -> Result<Value, String> {
     run(&["agent", "list"])
 }
 
+/// `herdr workspace list`: each workspace's id, label, number and focus.
+pub fn workspaces() -> Result<Value, String> {
+    run(&["workspace", "list"])
+}
+
 /// Types `text` into a pane followed by Enter (`herdr pane run`).
 pub fn send(pane: &str, text: &str) -> Result<Value, String> {
     if !valid_text(text) {
@@ -377,6 +382,10 @@ mod tests {
             );
         }
         assert!(agents().is_ok());
+        let ws = workspaces().expect("workspace list");
+        for w in ws.pointer("/result/workspaces").and_then(Value::as_array).expect("result.workspaces") {
+            eprintln!("{} {} #{}", w["workspace_id"], w["label"], w["number"]);
+        }
     }
 
     fn payload(pane: &str, bin: &str, distro: &str) -> Value {

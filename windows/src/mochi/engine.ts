@@ -8,7 +8,7 @@ import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
 import { PUMPKIN_BODY, drawOutfitBehind, drawOutfitFront, makeHead } from "./outfits";
-import { drawSprite, type SpriteSet } from "./sprite";
+import { drawSprite, spriteAnimates, type SpriteSet } from "./sprite";
 import type { Outfit } from "./wardrobe";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -567,6 +567,8 @@ export class BotEngine {
 
   /** True while anything is still moving — lets the island stop its RAF loop. */
   get busy(): boolean {
+    // A sprite strip plays on its own clock: the frames must keep coming.
+    if (this.sprite && spriteAnimates(this.sprite, this.state)) return true;
     return (
       this.tweens.size > 0 ||
       this.particles.length > 0 ||

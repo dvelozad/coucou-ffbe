@@ -22,7 +22,7 @@ export const DEFAULT_BASE_URL = "http://127.0.0.1:8811";
 const TIMEOUT_MS = 2000;
 
 /** The animations Coucou uses, in the order they are looked for. */
-export const SPRITE_ANIMS = ["idle", "atk", "win", "dead", "magic_atk"] as const;
+export const SPRITE_ANIMS = ["idle", "atk", "win", "dead", "magic_atk", "limit_atk"] as const;
 export type SpriteAnimName = (typeof SPRITE_ANIMS)[number];
 
 export interface SpriteAnim {
@@ -102,6 +102,10 @@ export function parseSpriteSet(partyApi: unknown, partyJson: unknown, baseUrl = 
     if (a) anims[name] = a;
   }
   if (!anims.idle) return null;
+  // limit_atk is only a stand-in for magic_atk: its frames are huge (up to
+  // ~1800 px), so a character drawn from them shrinks to a dot. Not fetched
+  // when magic_atk is there.
+  if (anims.magic_atk) delete anims.limit_atk;
   return {
     id: charId,
     name: typeof ch.name === "string" ? ch.name : charId,
@@ -110,35 +114,44 @@ export function parseSpriteSet(partyApi: unknown, partyJson: unknown, baseUrl = 
   };
 }
 
-const STATE_ANIM: Record<string, SpriteAnimName> = {
-  idle: "idle",
-  dizzy: "idle",
-  working: "atk",
-  thinking: "atk",
-  searching: "atk",
-  waiting: "atk",
-  approval: "atk",
-  question: "atk",
-  ratelimit: "atk",
-  finished: "win",
-  done: "win",
-  celebrate: "win",
-  error: "dead",
-  sleeping: "dead",
-  asleep: "dead",
+const WORK: readonly SpriteAnimName[] = ["atk", "magic_atk"];
+/** Blocked looks unlike working: a spell (or a limit break) rather than the plain attack. */
+const BLOCKED: readonly SpriteAnimName[] = ["magic_atk", "limit_atk", "atk"];
+
+/** For each state, the animations it plays, in order of preference. */
+const STATE_ANIMS: Record<string, readonly SpriteAnimName[]> = {
+  idle: ["idle"],
+  dizzy: ["idle"],
+  working: WORK,
+  thinking: WORK,
+  searching: WORK,
+  waiting: WORK,
+  ratelimit: WORK,
+  approval: BLOCKED,
+  question: BLOCKED,
+  finished: ["win"],
+  done: ["win"],
+  celebrate: ["win"],
+  error: ["dead"],
+  sleeping: ["dead"],
+  asleep: ["dead"],
 };
 
 /**
- * Which animation a state plays. Working falls back to `magic_atk` for a
- * character without `atk`; any animation the character lacks falls back to idle.
- * Without `anims` the preferred name is returned.
+ * Which animation a state plays: the first of its preferences the character
+ * has (working: atk, else magic_atk; blocked: magic_atk, else limit_atk, else
+ * atk), else idle. Without `anims` the first preference is returned.
  */
 export function animForState(state: BotStateName | string, anims?: Partial<SpriteSet["anims"]>): SpriteAnimName {
-  const want = STATE_ANIM[state] ?? "idle";
-  if (!anims) return want;
-  if (anims[want]) return want;
-  if (want === "atk" && anims.magic_atk) return "magic_atk";
-  return "idle";
+  const prefs = STATE_ANIMS[state] ?? ["idle"];
+  if (!anims) return prefs[0];
+  return prefs.find((name) => anims[name]) ?? "idle";
+}
+
+/** The state's animation has more than one frame: the island must keep drawing. */
+export function spriteAnimates(sprites: SpriteSet, state: BotStateName | string): boolean {
+  const anim = sprites.anims[animForState(state, sprites.anims)] ?? sprites.anims.idle;
+  return anim.count > 1 && anim.fps > 0;
 }
 
 /** The frame shown `tMs` into the animation, looping. */

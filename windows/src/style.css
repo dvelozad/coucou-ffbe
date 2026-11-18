@@ -176,6 +176,40 @@ body {
   transition: opacity 0.25s ease-in-out;
 }
 
+/* Compact strip: herdr workspace names beside the agent dots, in their order;
+   an amber dot marks a workspace with a blocked session (island/workspace-groups.ts). */
+#ws-tag {
+  position: absolute;
+  top: 50%;
+  right: 62px;
+  transform: translateY(-50%);
+  max-width: 120px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  font: 500 9px var(--mono);
+  letter-spacing: 0.02em;
+  color: var(--dim-2);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease-in-out;
+}
+
+#ws-tag .ws {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+#ws-tag .blocked {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #f5a524;
+}
+
 /* Compact Claude plan gauge, next to the agent dots in the compact island. */
 #compact-plan {
   --plan: #6b7079;
@@ -3921,4 +3955,79 @@ html[data-dir="rtl"] #views :is(.bubble, .reply .md-p, .reply .md-h, .reply .md-
 
 .herdr-note.err {
   color: var(--red);
+}
+
+/* ── Pill row grouped by herdr workspace (views.ts, island/workspace-groups.ts) ──
+   Only the container and the new headers: the pills themselves are unchanged. */
+
+/* The expanded card leaves the row ~106 px: two pill rows and three headers
+   fit; more scrolls, and a fade at the bottom says so (.more, set by views.ts). */
+.pills.grouped {
+  align-content: start;
+  overflow-y: auto;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  grid-auto-rows: auto;
+  row-gap: 2px;
+  scrollbar-width: none;
+}
+
+.pills.grouped::-webkit-scrollbar {
+  display: none;
+}
+
+.pills.grouped.more {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 6px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 6px), transparent);
+}
+
+.pill-group {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 12px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  font: 600 10px var(--font);
+  color: var(--dim-2);
+  text-align: left;
+  cursor: default;
+}
+
+.pill-group:hover {
+  color: var(--ink-2);
+}
+
+.pill-group .chev {
+  width: 8px;
+  font-size: 8px;
+  color: var(--dim-3);
+}
+
+.pill-group .name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.pill-group .count {
+  font-weight: 500;
+  color: var(--dim-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.pill-group .blocked {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f5a524;
+  box-shadow: 0 0 4px #f5a52499;
+}
+
+.pill-group.services {
+  font-weight: 500;
+  color: var(--dim-3);
 }

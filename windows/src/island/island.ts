@@ -21,6 +21,8 @@ import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { SeasonCache, parseOutfit } from "../mochi/wardrobe";
 import { characterSetting, loadSprites } from "../mochi/sprite";
+import { herdrWorkspaceList } from "./herdr-sync";
+import { groupByWorkspace, stripTasks, workspaceTags } from "./workspace-groups";
 import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq, uploadProgressCurve } from "../upload/sequence";
 import { dominantPct, planColor } from "../core/plan";
@@ -72,6 +74,8 @@ export class Island {
   private botGlow!: HTMLElement;
   private greetingCanvas!: HTMLCanvasElement;
   private miniGrid!: HTMLElement;
+  /** Compact strip: the herdr workspaces beside the mini-bots (island/workspace-groups.ts). */
+  private wsTag!: HTMLElement;
   private clockEl!: HTMLElement;
   private clockTimer?: number;
   /** The closed island's one line (core/closed.ts), and what it last showed. */
@@ -335,6 +339,7 @@ export class Island {
     this.botCanvas = h("canvas", { id: "bot-canvas" });
     this.greetingCanvas = h("canvas", { id: "greeting-canvas" });
     this.miniGrid = h("div", { id: "mini-grid" });
+    this.wsTag = h("div", { id: "ws-tag" });
     this.clockEl = h("div", { id: "island-clock" });
     this.countdown = h("div", { id: "countdown" });
     this.compactPlanDot = h("i", { class: "compact-plan-dot" });
@@ -391,6 +396,7 @@ export class Island {
       this.botGlow,
       this.botCanvas,
       this.miniGrid,
+      this.wsTag,
       this.compactPlan,
       this.clockEl,
       this.closedEl,
@@ -1511,11 +1517,23 @@ export class Island {
       }
     }
 
-    // Compact mini grid
+    // Compact mini grid. With herdr workspaces the minis follow the pill row's
+    // groups, and a tag beside them names the workspaces (no room for headers).
     const showGrid = State.mode === "compact";
     this.miniGrid.style.opacity = showGrid ? "1" : "0";
+    const grouping = groupByWorkspace(State.tasks, herdrWorkspaceList(), State.focusTask?.id ?? null);
+    const tags = workspaceTags(grouping);
+    // The clock and the plan gauge use the same stretch of the strip: they win.
+    const showTag = showGrid && tags.length > 0 && !State.settings.showClock && !claudeCompactPillVisible();
+    this.wsTag.style.opacity = showTag ? "1" : "0";
+    const tagKey = tags.map((t) => `${t.label}:${t.blocked}`).join("|");
+    if (this.wsTag.dataset.key !== tagKey) {
+      this.wsTag.dataset.key = tagKey;
+      this.wsTag.replaceChildren(...tags.map((t) => h("span", { class: "ws" },
+        t.label, t.blocked ? h("i", { class: "blocked" }) : null)));
+    }
     if (showGrid) {
-      const others = State.otherTasks.slice(0, 4);
+      const others = stripTasks(grouping, State.otherTasks);
       const key = others.map((t) => t.id).join("|");
       if (this.miniGrid.dataset.key !== key) {
         this.miniGrid.dataset.key = key;
@@ -1603,6 +1621,7 @@ export class Island {
       if (load !== this.spriteLoads) return;
       this.engine.sprite = set;
       this.dirty = true;
+      this.ensureRunning();
     });
   };
 

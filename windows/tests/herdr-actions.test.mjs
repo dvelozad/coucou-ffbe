@@ -133,7 +133,9 @@ test("free panes are the ones with no agent", () => {
 
 // ── The card: nothing without a click ─────────────────────────────────────────
 
-const herdrCalls = () => calls.filter(([cmd]) => cmd.startsWith("herdr_") && cmd !== "herdr_panes" && cmd !== "herdr_agents");
+/** The refresh after an action reads herdr's lists; only the rest is an action. */
+const READS = new Set(["herdr_panes", "herdr_agents", "herdr_workspaces"]);
+const herdrCalls = () => calls.filter(([cmd]) => cmd.startsWith("herdr_") && !READS.has(cmd));
 const settle = () => new Promise((r) => setImmediate(r));
 const host = { keyboard() {}, holdOpen() {} };
 const buttons = (card) => card.el.find("BUTTON");

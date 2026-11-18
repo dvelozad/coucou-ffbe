@@ -28,6 +28,8 @@ import { buildSpotifyCard, buildSpotifyPill, type SpotifyPillHost } from "./spot
 import { SPOTIFY_ID } from "../core/spotify";
 import { buildWhatsAppCard } from "./whatsapp";
 import { buildHerdrCard } from "./herdr";
+import { herdrWorkspaceList } from "../island/herdr-sync";
+import { groupByWorkspace, type PillGroup } from "../island/workspace-groups";
 import { WHATSAPP_ID } from "../core/whatsapp";
 import { MAIL_ID } from "../core/mail";
 import { buildMailCard } from "./mail";
@@ -216,6 +218,14 @@ function buildOverview(actions: ViewActions): ViewHost {
   );
   const left = card(null, leftBody, jump);
   const pills = h("div", { class: "pills" });
+  // Grouped, the row can hold more than the card shows: a fade marks what is
+  // below until it has been scrolled to.
+  const syncPillsOverflow = () => requestAnimationFrame(() => {
+    const more = pills.classList.contains("grouped") &&
+      pills.scrollTop + pills.clientHeight < pills.scrollHeight - 1;
+    pills.classList.toggle("more", more);
+  });
+  pills.addEventListener("scroll", syncPillsOverflow, { passive: true });
   const right = card(null, pills);
   // Opened from a plan pill in the header: stands in for the left card.
   const plan = new PlanCard();
@@ -452,22 +462,48 @@ function buildOverview(actions: ViewActions): ViewHost {
       highlightRow(rows, State.cardSelection, State.cardSelection !== shownSelection);
       shownSelection = State.cardSelection;
 
-      const others = State.otherTasks.slice(0, 4);
-      const pillKey = others.map((t) => `${t.id}:${t.color}:${t.pillBadge ?? ""}`).join("|");
+      // herdr pills group under their workspace, services last (island/workspace-groups.ts).
+      // One workspace and no services, or no herdr: the flat row, as before.
+      const grouping = groupByWorkspace(State.tasks, herdrWorkspaceList(), State.focusTask?.id ?? null);
+      const pillOf = (t: AgentTask) => `${t.id}:${t.color}:${t.pillBadge ?? ""}`;
+      const others = grouping.headers ? [] : State.otherTasks.slice(0, 4);
+      const pillKey = grouping.headers
+        ? grouping.groups.map((g) => [
+          g.key, g.label, g.count, g.blocked, collapsedGroups.has(g.key),
+          ...(collapsedGroups.has(g.key) ? [] : g.tasks.map(pillOf)),
+        ].join(":")).join("|")
+        : others.map(pillOf).join("|");
       if (pillKey !== pillIds) {
         pillIds = pillKey;
         clear(pills);
+        pills.classList.toggle("grouped", grouping.headers);
         spotifyPill = null;
-        for (const t of others) {
+        const addPill = (t: AgentTask) => {
           if (t.id === SPOTIFY_ID) {
             spotifyPill = buildSpotifyPill(t, () => actions.setFocus(t.id));
             pills.append(spotifyPill.el);
           } else {
             pills.append(buildPill(t, actions));
           }
+        };
+        if (grouping.headers) {
+          for (const g of grouping.groups) {
+            const collapsed = collapsedGroups.has(g.key);
+            pills.append(buildGroupHeader(g, collapsed, () => {
+              actions.blip();
+              if (collapsed) collapsedGroups.delete(g.key);
+              else collapsedGroups.add(g.key);
+              State.notify();
+            }));
+            if (!collapsed) g.tasks.forEach(addPill);
+          }
+        } else {
+          others.forEach(addPill);
         }
         pruneMiniBots();
       }
+      // Measured on every sync: the row has no height until the island opens.
+      if (grouping.headers || pills.classList.contains("more")) syncPillsOverflow();
       spotifyPill?.sync();
     },
   };
@@ -485,6 +521,25 @@ export function hasSessionTicker(task: AgentTask): boolean {
   const isSession = category === "workspace" || category === "agent" ||
     (category == null && task.id.startsWith("agent_"));
   return isSession && (task.state !== "idle" || task.steps.length > 0);
+}
+
+/** Groups folded by a click on their header; kept for the session. */
+const collapsedGroups = new Set<string>();
+
+/** A workspace (or Services) header over its pills: label, count, a mark when one is blocked. */
+function buildGroupHeader(g: PillGroup, collapsed: boolean, toggle: () => void): HTMLElement {
+  const el = h(
+    "button",
+    { class: g.kind === "services" ? "pill-group services" : "pill-group", onclick: toggle },
+    h("span", { class: "chev", text: collapsed ? "▸" : "▾" }),
+    h("span", { class: "name", text: g.label }),
+    h("span", { class: "count", text: String(g.count) }),
+  );
+  el.setAttribute("aria-expanded", String(!collapsed));
+  if (g.blocked && g.kind === "workspace") {
+    el.append(h("i", { class: "blocked", title: "waiting for an answer" }));
+  }
+  return el;
 }
 
 function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {

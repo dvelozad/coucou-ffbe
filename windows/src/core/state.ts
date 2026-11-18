@@ -40,6 +40,9 @@ export interface AgentTask {
   sessionId?: string | null;
   /** Claude's final message after Stop, one line; cleared when a new turn starts. */
   finalLine?: string | null;
+  /** herdr pills only: the workspace the pane is in ("w2") and its label ("EMAIL"). */
+  workspace?: string | null;
+  workspaceLabel?: string | null;
 }
 
 export interface ApprovalInfo {
