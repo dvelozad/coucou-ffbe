@@ -8,6 +8,7 @@ import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
 import { PUMPKIN_BODY, drawOutfitBehind, drawOutfitFront, makeHead } from "./outfits";
+import { drawSprite, type SpriteSet } from "./sprite";
 import type { Outfit } from "./wardrobe";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -243,6 +244,9 @@ export class BotEngine {
 
   state: BotStateName = "idle";
   cfg: BotStateCfg = BOT_STATES.idle;
+
+  /** The FFBE party leader drawn in Mochi's place (sprite.ts); null draws Mochi. */
+  sprite: SpriteSet | null = null;
 
   eyeOverride: EyeShape | null = null;
   eyeOverrideUntil = 0;
@@ -795,6 +799,10 @@ export class BotEngine {
    * `w`×`h` CSS pixels (the caller has already applied the DPR transform).
    */
   draw(x: CanvasRenderingContext2D, W: number, H: number) {
+    if (this.sprite) {
+      drawSprite(x, W, H, this.sprite, this.state, performance.now());
+      return;
+    }
     const R = W * 0.3;
     const rx = R * 1.14;
     const ry = R * 0.88;

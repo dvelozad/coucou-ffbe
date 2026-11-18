@@ -11,6 +11,7 @@ import type { ProviderId } from "./providers";
 import type { FileDiff } from "./diff";
 import type { Bindings } from "./shortcuts";
 import { DEFAULT_OUTFIT, type Outfit } from "../mochi/wardrobe";
+import type { CharacterKind } from "../mochi/sprite";
 import { pillColor } from "./pill-colors";
 import { Spotify, musicPlaying } from "./spotify";
 
@@ -145,6 +146,8 @@ export interface Settings {
    * Same raw values as the Mac's "mochiOutfit"; read it through parseOutfit.
    */
   mochiOutfit: string;
+  /** Mochi, or the FFBE party leader from Mission Control; read it through characterSetting. */
+  character: CharacterKind;
   /**
    * A colour of the user's own for a pill's Mochi, by pill ID ("#RRGGBB").
    * Empty means the catalog's colours; read it through core/pill-colors.ts.
@@ -203,6 +206,7 @@ export const DEFAULT_SETTINGS: Settings = {
   customUrl: "",
   shortcuts: {},
   mochiOutfit: DEFAULT_OUTFIT,
+  character: "sprite",
   pillColors: {},
   language: "",
 };

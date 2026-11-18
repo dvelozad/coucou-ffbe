@@ -20,6 +20,7 @@ import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { SeasonCache, parseOutfit } from "../mochi/wardrobe";
+import { characterSetting, loadSprites } from "../mochi/sprite";
 import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq, uploadProgressCurve } from "../upload/sequence";
 import { dominantPct, planColor } from "../core/plan";
@@ -107,6 +108,9 @@ export class Island {
   private botSize = new Spring(10);
 
   private engine = new BotEngine();
+  /** Sprite mode: re-reads the party leader every minute and on focus. */
+  private spriteTimer?: number;
+  private spriteLoads = 0;
   private greeting = new Greeting();
   private greetingShown = false;
   private seasons = new SeasonCache();
@@ -1572,7 +1576,35 @@ export class Island {
     State.notify();
     // ponytail: one timer for the life of the window; a minute is the clock's finest tick.
     this.clockTimer ??= window.setInterval(() => this.updateClock(), 10_000);
+    this.syncSprite();
   }
+
+  /** Sprite mode on: (re)load the leader. Off, or Mission Control down: Mochi. */
+  private syncSprite() {
+    const on = characterSetting(State.settings.character) === "sprite";
+    if (!on) {
+      if (this.spriteTimer != null) window.clearInterval(this.spriteTimer);
+      this.spriteTimer = undefined;
+      window.removeEventListener("focus", this.reloadSprite);
+      this.spriteLoads++;
+      this.engine.sprite = null;
+      return;
+    }
+    if (this.spriteTimer == null) {
+      this.spriteTimer = window.setInterval(this.reloadSprite, 60_000);
+      window.addEventListener("focus", this.reloadSprite);
+    }
+    this.reloadSprite();
+  }
+
+  private reloadSprite = () => {
+    const load = ++this.spriteLoads;
+    void loadSprites().then((set) => {
+      if (load !== this.spriteLoads) return;
+      this.engine.sprite = set;
+      this.dirty = true;
+    });
+  };
 
   get panelSize() {
     return { w: PANEL_W, h: PANEL_H };

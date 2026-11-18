@@ -152,7 +152,34 @@ Open questions). No phase ships FFBE art in git.
 4. **Rust unverified here** — the herdr Rust surface is the one part I cannot
    compile on this machine.
 
-## 8. Open questions (these change the work, not just the polish)
+## 8. Decisions taken (2026-11-18)
+
+1. **Rust toolchain installed** on this machine (`cargo 1.100.0`, rustup at
+   `~/.cargo`). `cargo build --release -p coucou-hook` succeeds in ~19 s, so the
+   herdr Rust work is buildable and testable here. The Tauri app itself needs the
+   Linux webkit/gtk system packages, which need root (see 9).
+2. **Sprite only.** The `character` setting no longer offers Mochi:
+   `characterSetting()` resolves every stored value to `"sprite"`. Mochi's
+   renderer stays in the code as the offline fallback — if Mission Control cannot
+   be reached, the notch still shows a character rather than an empty box.
+3. **herdr is called directly** by Coucou (not through Mission Control's
+   `/api/herdr/*`), so the app works even if the dashboard is down; Mission
+   Control is used only for the sprite assets and, later, the service pollers.
+
+## 9. What the app build still needs
+
+`cargo build -p coucou` runs the dependency download but the Tauri crate links
+against the Linux webkit stack, which is not installed here. One command with
+root fixes it (I cannot run sudo non-interactively):
+
+    sudo pacman -S --needed webkit2gtk-4.1 gtk3 libsoup3 base-devel \
+                          librsvg xdotool
+
+Until that runs, `windows/src-tauri` compiles only in `cargo check` form and the
+app cannot be launched; `coucou-hook` and the whole TypeScript layer are already
+verified.
+
+## 10. Open questions (these change the work, not just the polish)
 
 1. **Install a Rust toolchain?** Without it, P2/P3 ship as reviewed-but-unbuilt
    Rust. With `rustup` + Tauri's Linux deps (~1–2 GB), I can build and test the
