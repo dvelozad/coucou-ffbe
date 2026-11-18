@@ -168,16 +168,21 @@ Open questions). No phase ships FFBE art in git.
 
 ## 9. What the app build still needs
 
-`cargo build -p coucou` runs the dependency download but the Tauri crate links
-against the Linux webkit stack, which is not installed here. One command with
-root fixes it (I cannot run sudo non-interactively):
+The Tauri app now **compiles** (`cargo build -p coucou` gets through every crate)
+and fails only at the **link** step:
 
-    sudo pacman -S --needed webkit2gtk-4.1 gtk3 libsoup3 base-devel \
-                          librsvg xdotool
+    rust-lld: error: unable to find library -lgtk-layer-shell
 
-Until that runs, `windows/src-tauri` compiles only in `cargo check` form and the
-app cannot be launched; `coucou-hook` and the whole TypeScript layer are already
-verified.
+`windows/README.md` (line ~739) already lists the Linux dependencies; the Arch
+names are `webkit2gtk-4.1`, `gtk-layer-shell` and `libayatana-appindicator`.
+`webkit2gtk-4.1` is installed; the other two are not. One command with root fixes
+it (sudo is interactive here, so I cannot run it):
+
+    sudo pacman -S --needed gtk-layer-shell libayatana-appindicator
+
+Then `npm run tauri dev` (or `npm run pack`) in `windows/`. Until then
+`coucou-hook` and the whole TypeScript layer are built and tested; only the GUI
+binary is missing.
 
 ## 10. Open questions (these change the work, not just the polish)
 
