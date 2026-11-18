@@ -6,6 +6,7 @@ import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
+import { startHerdrSync } from "./island/herdr-sync";
 import { registerPhoneLink } from "./island/phone-link";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { registerShortcutHandlers } from "./island/shortcuts";
@@ -58,6 +59,7 @@ async function main() {
   void Bridge.setSystemLanguages(systemLanguages());
   island.applySettings();
   State.loadIntegrationTasks();
+  startHerdrSync();
   if (boot && !boot.cursorPoll) island.followPageCursor();
   await island.desktop.init();
 

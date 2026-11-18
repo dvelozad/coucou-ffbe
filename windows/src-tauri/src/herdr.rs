@@ -6,8 +6,11 @@
 // so herdr may not be on PATH there.
 
 use serde_json::Value;
-use std::process::Command;
+use std::io::Read;
+use std::path::Path;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pane {
@@ -115,10 +118,167 @@ pub fn focus(session: &str) -> bool {
     }
 }
 
+// ── herdr as the session source of truth ─────────────────────────────────────
+// Coucou asks herdr itself what runs where (`pane list`, `agent list`) and, on
+// an explicit click, acts on a pane. argv only, never a shell; every value that
+// becomes an argument is checked first. Any failure is an Err, and the island
+// then behaves as if herdr were not there.
+
+const TIMEOUT: Duration = Duration::from_secs(3);
+/// `pane list` with many panes is a few tens of kB; anything far past that is not herdr.
+const MAX_OUTPUT: u64 = 4 << 20;
+const MAX_TEXT: usize = 4096;
+
+/// HERDR_BIN_PATH when it is a valid path to herdr, else ~/.local/bin/herdr when
+/// it exists (a desktop launch rarely has it on PATH), else `herdr` on PATH.
+fn bin() -> String {
+    if let Ok(path) = std::env::var("HERDR_BIN_PATH") {
+        if valid_bin(&path) {
+            return path;
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let local = Path::new(&home).join(".local/bin/herdr");
+        if let Some(local) = local.to_str().filter(|p| valid_bin(p)) {
+            if Path::new(local).is_file() {
+                return local.to_string();
+            }
+        }
+    }
+    "herdr".to_string()
+}
+
+/// A key name as herdr spells them: `enter`, `esc`, `ctrl+c`, `y`, `f5`…
+fn valid_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && !value.starts_with('-')
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '_' | '-'))
+}
+
+/// Text typed into a pane: one line, no control characters, nothing an
+/// argument parser would read as an option.
+fn valid_text(value: &str) -> bool {
+    !value.is_empty() && value.len() <= MAX_TEXT && !value.starts_with('-') && !value.chars().any(char::is_control)
+}
+
+/// Runs herdr with `args`, stdin closed, for at most TIMEOUT; its stdout as JSON.
+fn run(args: &[&str]) -> Result<Value, String> {
+    if cfg!(windows) {
+        // herdr lives in WSL there; only the hook-relayed `focus` reaches it.
+        return Err("herdr: not available on this platform".into());
+    }
+    let mut cmd = Command::new(bin());
+    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = crate::platform::no_console(&mut cmd).spawn().map_err(|e| format!("herdr: {e}"))?;
+    let mut stdout = child.stdout.take().ok_or("herdr: no stdout")?;
+    // Read on the side so a full pipe cannot stall the wait below.
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = (&mut stdout).take(MAX_OUTPUT).read_to_end(&mut out);
+        out
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if start.elapsed() < TIMEOUT => std::thread::sleep(Duration::from_millis(15)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("herdr {}: timed out", args.join(" ")));
+            }
+            Err(e) => return Err(format!("herdr: {e}")),
+        }
+    };
+    let out = reader.join().map_err(|_| "herdr: reader failed".to_string())?;
+    let json: Value = serde_json::from_slice(&out).map_err(|e| format!("herdr: bad JSON: {e}"))?;
+    if !status.success() {
+        let message = json.pointer("/error/message").and_then(Value::as_str).unwrap_or("failed");
+        return Err(format!("herdr {}: {message}", args.first().unwrap_or(&"")));
+    }
+    Ok(json)
+}
+
+fn pane_arg(pane: &str) -> Result<&str, String> {
+    if valid_name(pane) { Ok(pane) } else { Err("herdr: invalid pane id".into()) }
+}
+
+/// `herdr pane list`: every pane, with its agent and `agent_status` when it has one.
+pub fn panes() -> Result<Value, String> {
+    run(&["pane", "list"])
+}
+
+/// `herdr agent list`: the panes herdr recognises an agent in.
+pub fn agents() -> Result<Value, String> {
+    run(&["agent", "list"])
+}
+
+/// Types `text` into a pane followed by Enter (`herdr pane run`).
+pub fn send(pane: &str, text: &str) -> Result<Value, String> {
+    if !valid_text(text) {
+        return Err("herdr: text refused".into());
+    }
+    run(&["pane", "run", pane_arg(pane)?, text])
+}
+
+/// Presses keys in a pane (`herdr pane send-keys`), all checked before any is sent.
+pub fn keys(pane: &str, keys: &[String]) -> Result<Value, String> {
+    if keys.is_empty() || keys.len() > 16 || !keys.iter().all(|k| valid_key(k)) {
+        return Err("herdr: keys refused".into());
+    }
+    let mut args = vec!["pane", "send-keys", pane_arg(pane)?];
+    args.extend(keys.iter().map(String::as_str));
+    run(&args)
+}
+
+/// Closes a pane (`herdr pane close`).
+pub fn close(pane: &str) -> Result<Value, String> {
+    run(&["pane", "close", pane_arg(pane)?])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn values_for_the_pane_api_are_checked() {
+        for ok in ["enter", "esc", "ctrl+c", "y", "f5", "shift+tab"] {
+            assert!(valid_key(ok), "{ok}");
+        }
+        for bad in ["", "-x", "--help", "a b", "ctrl;c", "enter\n", &"k".repeat(33)] {
+            assert!(!valid_key(bad), "{bad:?}");
+        }
+        assert!(valid_text("yes, go ahead"));
+        for bad in ["", "-rf", "--help", "two\nlines", "esc\u{1b}[A"] {
+            assert!(!valid_text(bad), "{bad:?}");
+        }
+        assert!(!valid_text(&"x".repeat(MAX_TEXT + 1)));
+        assert!(send("-p", "hi").is_err());
+        assert!(keys("w1:p1", &["--help".to_string()]).is_err());
+        assert!(keys("w1:p1", &[]).is_err());
+        assert!(close("w1 p1").is_err());
+    }
+
+    /// Live: prints what herdr reports. Skipped where herdr does not answer.
+    #[test]
+    fn live_pane_list_when_herdr_runs() {
+        let Ok(list) = panes() else {
+            eprintln!("herdr not available: skipped");
+            return;
+        };
+        let panes = list.pointer("/result/panes").and_then(Value::as_array).expect("result.panes");
+        for p in panes {
+            eprintln!(
+                "{} agent={} status={}",
+                p["pane_id"].as_str().unwrap_or("?"),
+                p["agent"].as_str().unwrap_or("-"),
+                p["agent_status"].as_str().unwrap_or("-")
+            );
+        }
+        assert!(agents().is_ok());
+    }
 
     fn payload(pane: &str, bin: &str, distro: &str) -> Value {
         json!({ "session_id": "s1", "herdr_pane": pane, "herdr_bin": bin, "wsl_distro": distro })

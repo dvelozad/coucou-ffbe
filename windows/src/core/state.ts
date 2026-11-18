@@ -15,7 +15,7 @@ import type { CharacterKind } from "../mochi/sprite";
 import { pillColor } from "./pill-colors";
 import { Spotify, musicPlaying } from "./spotify";
 
-export type AgentSource = "claudeCode" | "n8n" | "agent";
+export type AgentSource = "claudeCode" | "n8n" | "agent" | "herdr";
 export type PillBadge = "approval" | "finished" | "error";
 
 export interface AgentTask {

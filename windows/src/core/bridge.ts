@@ -330,6 +330,17 @@ export const Bridge = {
    */
   codexPlanUsage: () => call<unknown>("codex_plan_usage"),
 
+  /** `herdr pane list` as herdr prints it, or null when herdr is absent or fails. */
+  herdrPanes: () => call<unknown>("herdr_panes"),
+  /** `herdr agent list`, or null. */
+  herdrAgents: () => call<unknown>("herdr_agents"),
+  /** Types a line into a herdr pane. Only from an explicit click. */
+  herdrSend: (pane: string, text: string) => call<unknown>("herdr_send", { pane, text }),
+  /** Presses keys (`enter`, `esc`, `ctrl+c`…) in a herdr pane. Only from an explicit click. */
+  herdrKeys: (pane: string, keys: string[]) => call<unknown>("herdr_keys", { pane, keys }),
+  /** Closes a herdr pane. Only from an explicit click. */
+  herdrClose: (pane: string) => call<unknown>("herdr_close", { pane }),
+
   approvalDecision: (requestId: string, decision: "allow" | "deny") =>
     call<void>("approval_decision", { requestId, decision }),
   /** "The card is up" — until this lands the relay only waits a moment. */

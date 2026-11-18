@@ -512,6 +512,36 @@ async fn codex_plan_usage() -> Option<serde_json::Value> {
     tauri::async_runtime::spawn_blocking(codex_plan::read).await.ok().flatten()
 }
 
+/// herdr's panes, or null when herdr is absent or fails (polled: no error to log).
+#[tauri::command]
+async fn herdr_panes() -> Option<serde_json::Value> {
+    tauri::async_runtime::spawn_blocking(herdr::panes).await.ok()?.ok()
+}
+
+/// herdr's agents, or null when herdr is absent or fails.
+#[tauri::command]
+async fn herdr_agents() -> Option<serde_json::Value> {
+    tauri::async_runtime::spawn_blocking(herdr::agents).await.ok()?.ok()
+}
+
+/// Types a line into a herdr pane. Only from an explicit click.
+#[tauri::command]
+async fn herdr_send(pane: String, text: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || herdr::send(&pane, &text)).await.map_err(|e| e.to_string())?
+}
+
+/// Presses keys in a herdr pane. Only from an explicit click.
+#[tauri::command]
+async fn herdr_keys(pane: String, keys: Vec<String>) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || herdr::keys(&pane, &keys)).await.map_err(|e| e.to_string())?
+}
+
+/// Closes a herdr pane. Only from an explicit click.
+#[tauri::command]
+async fn herdr_close(pane: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || herdr::close(&pane)).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn approval_decision(app: AppHandle, request_id: String, decision: String) {
     recap::record_decision(&app, &request_id, &decision);
@@ -943,6 +973,11 @@ pub fn run() {
             status_line_preview,
             status_line_apply,
             codex_plan_usage,
+            herdr_panes,
+            herdr_agents,
+            herdr_send,
+            herdr_keys,
+            herdr_close,
             approval_decision,
             approval_answer,
             approval_ack,
