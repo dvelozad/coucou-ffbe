@@ -22,7 +22,7 @@ import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from ".
 import { SeasonCache, parseOutfit } from "../mochi/wardrobe";
 import { characterSetting, loadSprites } from "../mochi/sprite";
 import { herdrWorkspaceList } from "./herdr-sync";
-import { groupByWorkspace, stripTasks, workspaceTags } from "./workspace-groups";
+import { groupByWorkspace, pillTag, stripTasks } from "./workspace-groups";
 import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq, uploadProgressCurve } from "../upload/sequence";
 import { dominantPct, planColor } from "../core/plan";
@@ -74,8 +74,6 @@ export class Island {
   private botGlow!: HTMLElement;
   private greetingCanvas!: HTMLCanvasElement;
   private miniGrid!: HTMLElement;
-  /** Compact strip: the herdr workspaces beside the mini-bots (island/workspace-groups.ts). */
-  private wsTag!: HTMLElement;
   private clockEl!: HTMLElement;
   private clockTimer?: number;
   /** The closed island's one line (core/closed.ts), and what it last showed. */
@@ -339,7 +337,6 @@ export class Island {
     this.botCanvas = h("canvas", { id: "bot-canvas" });
     this.greetingCanvas = h("canvas", { id: "greeting-canvas" });
     this.miniGrid = h("div", { id: "mini-grid" });
-    this.wsTag = h("div", { id: "ws-tag" });
     this.clockEl = h("div", { id: "island-clock" });
     this.countdown = h("div", { id: "countdown" });
     this.compactPlanDot = h("i", { class: "compact-plan-dot" });
@@ -396,7 +393,6 @@ export class Island {
       this.botGlow,
       this.botCanvas,
       this.miniGrid,
-      this.wsTag,
       this.compactPlan,
       this.clockEl,
       this.closedEl,
@@ -899,7 +895,8 @@ export class Island {
     this.islandEl.style.transform = `translateX(-50%)`;
     // These follow the island as it resizes, so they belong here rather than in
     // the state-driven DOM sync.
-    this.miniGrid.style.left = `${w - 40 - 14.5}px`;
+    // Tagged, the minis are one row that grows to the left from the grid's right edge.
+    this.miniGrid.style.left = this.miniGrid.classList.contains("tagged") ? "auto" : `${w - 40 - 14.5}px`;
     this.miniGrid.style.top = `${hh / 2 - 14.5}px`;
     this.clockEl.style.height = `${hh}px`;
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
@@ -1518,30 +1515,33 @@ export class Island {
     }
 
     // Compact mini grid. With herdr workspaces the minis follow the pill row's
-    // groups, and a tag beside them names the workspaces (no room for headers).
+    // groups, each herdr mini with its workspace tag above it (one row then);
+    // the clock and the plan gauge need that stretch of the strip, so with
+    // either on the minis stay the usual 2×2 grid, untagged.
     const showGrid = State.mode === "compact";
     this.miniGrid.style.opacity = showGrid ? "1" : "0";
-    const grouping = groupByWorkspace(State.tasks, herdrWorkspaceList(), State.focusTask?.id ?? null);
-    const tags = workspaceTags(grouping);
-    // The clock and the plan gauge use the same stretch of the strip: they win.
-    const showTag = showGrid && tags.length > 0 && !State.settings.showClock && !claudeCompactPillVisible();
-    this.wsTag.style.opacity = showTag ? "1" : "0";
-    const tagKey = tags.map((t) => `${t.label}:${t.blocked}`).join("|");
-    if (this.wsTag.dataset.key !== tagKey) {
-      this.wsTag.dataset.key = tagKey;
-      this.wsTag.replaceChildren(...tags.map((t) => h("span", { class: "ws" },
-        t.label, t.blocked ? h("i", { class: "blocked" }) : null)));
-    }
     if (showGrid) {
+      const grouping = groupByWorkspace(State.tasks, herdrWorkspaceList(), State.focusTask?.id ?? null);
       const others = stripTasks(grouping, State.otherTasks);
-      const key = others.map((t) => t.id).join("|");
+      const tagged = grouping.headers && !State.settings.showClock && !claudeCompactPillVisible();
+      const tags = others.map((t) => (tagged ? pillTag(t) : null));
+      const key = others.map((t, i) => `${t.id}:${tags[i]?.label ?? ""}:${tags[i]?.blocked ?? ""}`).join("|") + `|${tagged}`;
       if (this.miniGrid.dataset.key !== key) {
         this.miniGrid.dataset.key = key;
+        this.miniGrid.classList.toggle("tagged", tagged);
         this.miniGrid.replaceChildren();
-        for (const t of others) {
-          this.miniGrid.append(createMiniBot(t, 13));
-        }
+        others.forEach((t, i) => {
+          const mini = createMiniBot(t, 13);
+          if (!tagged) return void this.miniGrid.append(mini);
+          const tag = tags[i];
+          // A service keeps an empty tag line, so every mini sits on one baseline.
+          const label = h("span", { class: "mini-tag" },
+            tag ? h("span", { class: "t", text: tag.label }) : null,
+            tag?.blocked ? h("i", { class: "blocked" }) : null);
+          this.miniGrid.append(h("span", { class: "mini-item" }, label, mini));
+        });
         pruneMiniBots();
+        this.applyGeometry();
       }
     }
 

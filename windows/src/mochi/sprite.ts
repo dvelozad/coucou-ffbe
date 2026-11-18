@@ -78,16 +78,20 @@ function parseAnim(raw: unknown, base: string, dir: string): SpriteAnim | null {
 
 /**
  * The leader's sprite set from `/api/party` and `party.json`, without images.
- * The leader is `party[0]`; its member's `character` names the entry in
+ * The leader is the member Mission Control marks `active` — the one its Camp
+ * shows — falling back to `party[0]`. Its `character` names the entry in
  * party.json (the member id when it has none). Null when anything is missing,
  * including an idle animation.
  */
 export function parseSpriteSet(partyApi: unknown, partyJson: unknown, baseUrl = DEFAULT_BASE_URL): SpriteSet | null {
   if (!isObj(partyApi) || !Array.isArray(partyApi.party)) return null;
-  const leader = partyApi.party[0];
-  if (typeof leader !== "string" || !leader) return null;
   const members = Array.isArray(partyApi.members) ? partyApi.members : [];
-  const member = members.find((m): m is Record<string, unknown> => isObj(m) && m.id === leader);
+  const findMember = (id: unknown) =>
+    members.find((m): m is Record<string, unknown> => isObj(m) && m.id === id);
+  const activeId = typeof partyApi.active === "string" && partyApi.active ? partyApi.active : null;
+  const leader = findMember(activeId) ? activeId : partyApi.party[0];
+  if (typeof leader !== "string" || !leader) return null;
+  const member = findMember(leader);
   const charId = typeof member?.character === "string" && member.character ? member.character : leader;
 
   if (!isObj(partyJson) || !Array.isArray(partyJson.characters)) return null;

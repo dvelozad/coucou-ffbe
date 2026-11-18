@@ -176,36 +176,46 @@ body {
   transition: opacity 0.25s ease-in-out;
 }
 
-/* Compact strip: herdr workspace names beside the agent dots, in their order;
-   an amber dot marks a workspace with a blocked session (island/workspace-groups.ts). */
-#ws-tag {
-  position: absolute;
-  top: 50%;
-  right: 62px;
-  transform: translateY(-50%);
-  max-width: 120px;
+/* Compact strip, herdr workspaces: the minis in one row, each herdr mini with
+   its workspace tag above it, an amber dot on the blocked one's tag
+   (island/workspace-groups.ts). Non-interactive, like the grid. */
+#mini-grid.tagged {
+  right: 25.5px;
+  width: auto;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow: hidden;
-  white-space: nowrap;
-  font: 500 9px var(--mono);
-  letter-spacing: 0.02em;
-  color: var(--dim-2);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.25s ease-in-out;
+  align-items: flex-end;
+  gap: 7px;
 }
 
-#ws-tag .ws {
-  display: inline-flex;
+.mini-item {
+  display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 3px;
 }
 
-#ws-tag .blocked {
-  width: 5px;
-  height: 5px;
+.mini-tag {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 10px;
+  max-width: 44px;
+  font: 500 9px/10px var(--mono);
+  letter-spacing: 0.02em;
+  color: var(--dim-2);
+  white-space: nowrap;
+}
+
+.mini-tag .t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.mini-tag .blocked {
+  flex: 0 0 auto;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: #f5a524;
 }

@@ -116,20 +116,24 @@ test("reconcile puts the workspace and its label on each herdr task", () => {
   assert.equal(reconcile(out, panes, null, renamed)[0].workspaceLabel, "MAIL");
 });
 
-// ── The compact strip: minis in group order, and a tag naming the workspaces ──
+// ── The compact strip: minis in group order, a tag on each herdr mini ────────
 
 test("the strip's minis follow the groups, services last; ungrouped keeps today's four", async () => {
-  const { stripTasks, workspaceTags } = await import("../src/island/workspace-groups.ts");
+  const { stripTasks } = await import("../src/island/workspace-groups.ts");
   const tasks = [service("integration_claude"), service("integration_n8n"), herdr("w7:p1"), herdr("w2:p1", { state: "approval" }), herdr("w2:p2")];
   const list = [ws("w2", "EMAIL", 2), ws("w7", "COUCOU", 5, true)];
   const g = groupByWorkspace(tasks, list, "integration_claude");
   assert.deepEqual(stripTasks(g, []).map((t) => t.id), ["w7:p1", "w2:p1", "w2:p2", "integration_n8n"]);
-  assert.deepEqual(workspaceTags(g), [
-    { key: "w7", label: "COUCOU", blocked: false },
-    { key: "w2", label: "EMAIL", blocked: true },
-  ]);
   const flat = groupByWorkspace([service("integration_claude"), service("integration_n8n")], [], "integration_claude");
   const others = ["a", "b", "c", "d", "e"].map((id) => service(id));
   assert.deepEqual(stripTasks(flat, others).map((t) => t.id), ["a", "b", "c", "d"]);
-  assert.deepEqual(workspaceTags(flat), []);
+});
+
+test("each herdr pill carries its workspace; only the blocked pill is marked; services get none", async () => {
+  const { pillTag } = await import("../src/island/workspace-groups.ts");
+  assert.deepEqual(pillTag(herdr("w2:p1", { workspaceLabel: "EMAIL", state: "approval" })), { label: "EMAIL", blocked: true });
+  assert.deepEqual(pillTag(herdr("w2:p2", { workspaceLabel: "EMAIL", state: "working" })), { label: "EMAIL", blocked: false });
+  assert.deepEqual(pillTag(herdr("w9:p1", { workspace: undefined })), { label: "w9", blocked: false });
+  assert.equal(pillTag(service("integration_n8n", { state: "approval" })), null);
+  assert.equal(pillTag(service("integration_claude")), null);
 });

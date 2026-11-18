@@ -19,6 +19,9 @@ const API = {
   ],
 };
 
+// The same members with Cloud active: the tests below assert Cloud's animations.
+const CLOUD = { ...API, active: "cloud", party: ["cloud"] };
+
 const JSON_ = {
   characters: [
     {
@@ -104,8 +107,21 @@ test("bad timing never yields a frame out of range", () => {
 
 // ── parseSpriteSet ────────────────────────────────────────────────────────────
 
-test("the leader is party[0], resolved through its member's character", () => {
+test("the leader is the member Mission Control marks active", () => {
   const set = parseSpriteSet(API, JSON_, "http://host:1/");
+  assert.equal(set.id, "regis");
+  assert.equal(set.name, "Regis");
+  assert.equal(set.displayHeight, 120);
+  assert.deepEqual(Object.keys(set.anims), ["idle"]);
+  assert.deepEqual(
+    { ...set.anims.idle, url: undefined },
+    { sheet: "idle.png", url: undefined, frameW: 100, frameH: 100, count: 2, fps: 4, image: null },
+  );
+});
+
+test("a member's character field, not its id, names the sprite", () => {
+  const api = { active: "cloud", party: ["cloud"], members: [{ id: "cloud", character: "cloud-ac", name: "Cloud" }] };
+  const set = parseSpriteSet(api, JSON_, "http://host:1/");
   assert.equal(set.id, "cloud-ac");
   assert.equal(set.name, "Cloud");
   assert.equal(set.displayHeight, 140);
@@ -124,8 +140,8 @@ test("a member without a character field uses its id", () => {
   assert.equal(set.anims.idle.url, "http://127.0.0.1:8811/static/companion/regis/idle.png");
 });
 
-test("leader changes follow party order, not `active`", () => {
-  const set = parseSpriteSet({ ...API, party: ["regis", "cloud"] }, JSON_);
+test("without an active member, party[0] leads", () => {
+  const set = parseSpriteSet({ party: ["regis", "cloud"], members: API.members }, JSON_);
   assert.equal(set.id, "regis");
 });
 
@@ -133,19 +149,19 @@ test("anything missing gives null", () => {
   assert.equal(parseSpriteSet(null, JSON_), null);
   assert.equal(parseSpriteSet({ party: [] }, JSON_), null);
   assert.equal(parseSpriteSet({ party: ["nobody"] }, JSON_), null);
-  assert.equal(parseSpriteSet(API, null), null);
-  assert.equal(parseSpriteSet(API, { characters: "x" }), null);
+  assert.equal(parseSpriteSet(CLOUD, null), null);
+  assert.equal(parseSpriteSet(CLOUD, { characters: "x" }), null);
   const noIdle = { characters: [{ id: "cloud-ac", animations: { atk: anim("atk.png", 1, 1, 1, 1) } }] };
-  assert.equal(parseSpriteSet(API, noIdle), null);
+  assert.equal(parseSpriteSet(CLOUD, noIdle), null);
   const badIdle = { characters: [{ id: "cloud-ac", animations: { idle: anim("idle.png", 0, 10, 2, 1) } }] };
-  assert.equal(parseSpriteSet(API, badIdle), null);
+  assert.equal(parseSpriteSet(CLOUD, badIdle), null);
 });
 
 test("an animation with bad geometry is dropped, the rest kept", () => {
   const j = structuredClone(JSON_);
   j.characters[0].animations.win.count = -1;
   delete j.characters[0].animations.atk.sheet;
-  const set = parseSpriteSet(API, j);
+  const set = parseSpriteSet(CLOUD, j);
   assert.deepEqual(Object.keys(set.anims).sort(), ["dead", "idle", "magic_atk"]);
   assert.equal(animForState("working", set.anims), "magic_atk");
   assert.equal(animForState("finished", set.anims), "idle");
@@ -154,7 +170,7 @@ test("an animation with bad geometry is dropped, the rest kept", () => {
 // ── geometry and setting ──────────────────────────────────────────────────────
 
 test("idle is 0.9 of the box tall, centred and bottom-aligned", () => {
-  const set = parseSpriteSet(API, JSON_);
+  const set = parseSpriteSet(CLOUD, JSON_);
   const r = spriteRect(set, set.anims.idle, 200, 100);
   assert.ok(Math.abs(r.h - 90) < 1e-9);
   assert.ok(Math.abs(r.x + r.w / 2 - 100) < 1e-9);
@@ -162,7 +178,7 @@ test("idle is 0.9 of the box tall, centred and bottom-aligned", () => {
 });
 
 test("a larger frame keeps idle's scale when it fits, shrinks when not", () => {
-  const set = parseSpriteSet(API, JSON_);
+  const set = parseSpriteSet(CLOUD, JSON_);
   const fits = spriteRect(set, set.anims.dead, 200, 100);
   assert.ok(Math.abs(fits.h - 150 * (90 / 250)) < 1e-9);
   const big = spriteRect(set, set.anims.atk, 200, 100);
@@ -193,22 +209,22 @@ test("blocked plays a different strip from working when the character has one", 
 test("limit_atk is only kept (and fetched) when there is no magic_atk", () => {
   const j = structuredClone(JSON_);
   j.characters[0].animations.limit_atk = anim("limit_atk.png", 1778, 1705, 8, 12);
-  assert.equal(parseSpriteSet(API, j).anims.limit_atk, undefined);
+  assert.equal(parseSpriteSet(CLOUD, j).anims.limit_atk, undefined);
   delete j.characters[0].animations.magic_atk;
-  const set = parseSpriteSet(API, j);
+  const set = parseSpriteSet(CLOUD, j);
   assert.equal(set.anims.limit_atk.url, "http://127.0.0.1:8811/static/companion/cloud%20ac/limit_atk.png");
   assert.equal(animForState("approval", set.anims), "limit_atk");
 });
 
 test("every state the island uses animates, except a one-frame strip", () => {
-  const set = parseSpriteSet(API, JSON_);
+  const set = parseSpriteSet(CLOUD, JSON_);
   for (const s of ["idle", "working", "approval", "finished"]) assert.ok(spriteAnimates(set, s), s);
   assert.equal(spriteAnimates(set, "error"), false, "dead is a single frame");
 });
 
 test("the engine draws the strip of its state, and stays busy while it plays", async () => {
   const { BotEngine } = await import("../src/mochi/engine.ts");
-  const set = parseSpriteSet(API, JSON_);
+  const set = parseSpriteSet(CLOUD, JSON_);
   for (const [name, a] of Object.entries(set.anims)) a.image = { name };
   const drawn = [];
   const ctx = { imageSmoothingEnabled: true, drawImage: (img) => drawn.push(img.name) };

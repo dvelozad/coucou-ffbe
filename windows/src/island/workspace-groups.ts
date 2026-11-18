@@ -90,9 +90,8 @@ export function groupByWorkspace(
 }
 
 // ── The compact strip ─────────────────────────────────────────────────────────
-// 288 × 32 px, with four 13 px mini-bots: no room for headers or pill labels.
-// The minis follow the groups' order instead, and a small tag beside them
-// names the workspaces in that order, a blocked one marked.
+// 288 × 32 px, with 13 px mini-bots: no room for headers. The minis follow the
+// groups' order, and each herdr mini carries its own workspace tag.
 
 export const STRIP_MINIS = 4;
 
@@ -102,16 +101,16 @@ export function stripTasks(grouping: PillGrouping, others: readonly AgentTask[])
   return grouping.groups.flatMap((g) => g.tasks).slice(0, STRIP_MINIS);
 }
 
-export interface WorkspaceTag {
-  key: string;
+export interface PillTag {
+  /** The workspace label ("EMAIL"), else its id. */
   label: string;
+  /** This pill's own session is blocked (not merely its workspace). */
   blocked: boolean;
 }
 
-/** The strip's workspace tag, in group order; empty when the row has no headers. */
-export function workspaceTags(grouping: PillGrouping): WorkspaceTag[] {
-  if (!grouping.headers) return [];
-  return grouping.groups
-    .filter((g) => g.kind === "workspace")
-    .map((g) => ({ key: g.key, label: g.label, blocked: g.blocked }));
+/** The workspace tag a pill wears: herdr pills only, services get none. */
+export function pillTag(task: AgentTask): PillTag | null {
+  const ws = taskWorkspace(task);
+  if (ws == null) return null;
+  return { label: task.workspaceLabel || ws, blocked: task.state === "approval" };
 }
