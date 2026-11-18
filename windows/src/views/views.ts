@@ -27,6 +27,7 @@ import { buildLaunch } from "./launch";
 import { buildSpotifyCard, buildSpotifyPill, type SpotifyPillHost } from "./spotify";
 import { SPOTIFY_ID } from "../core/spotify";
 import { buildWhatsAppCard } from "./whatsapp";
+import { buildHerdrCard } from "./herdr";
 import { WHATSAPP_ID } from "../core/whatsapp";
 import { MAIL_ID } from "../core/mail";
 import { buildMailCard } from "./mail";
@@ -231,6 +232,11 @@ function buildOverview(actions: ViewActions): ViewHost {
     keyboard: (on) => actions.keyboard(on),
     holdOpen: (on) => actions.holdOpen(on),
   });
+  // A herdr pane's actions (island/herdr-actions.ts): kept in place for its drafts.
+  const herdrCard = buildHerdrCard({
+    keyboard: (on) => actions.keyboard(on),
+    holdOpen: (on) => actions.holdOpen(on),
+  });
 
   const el = h("div", { class: "view overview" },
     h("div", { class: "left" }, left),
@@ -240,7 +246,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   let pillIds = "";
   let detailOpen = false;
   let lastFocus: string | null = null;
-  let mode: "ticker" | "card" | "plan" | "diff" | "spotify" | "whatsapp" | "mail" | null = null;
+  let mode: "ticker" | "card" | "plan" | "diff" | "spotify" | "whatsapp" | "mail" | "herdr" | null = null;
   let cardKey = "";
   /** The list row highlighted at the last sync, to scroll only when it moves. */
   let shownSelection: number | null = null;
@@ -414,6 +420,14 @@ function buildOverview(actions: ViewActions): ViewHost {
           cardKey = "";
         }
         whatsappCard.sync();
+      } else if (task && task.source === "herdr") {
+        if (mode !== "herdr") {
+          clear(leftBody);
+          leftBody.append(herdrCard.el);
+          mode = "herdr";
+          cardKey = "";
+        }
+        herdrCard.sync(task);
       } else if (task) {
         const info = State.integrations[task.id];
         const key = [

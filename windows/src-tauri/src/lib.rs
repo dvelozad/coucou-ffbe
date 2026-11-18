@@ -542,6 +542,24 @@ async fn herdr_close(pane: String) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || herdr::close(&pane)).await.map_err(|e| e.to_string())?
 }
 
+/// Selects a herdr pane. Only from an explicit click.
+#[tauri::command]
+async fn herdr_focus(pane: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || herdr::focus_pane(&pane)).await.map_err(|e| e.to_string())?
+}
+
+/// A herdr pane's last lines, `{ text }`, read before answering a blocked agent.
+#[tauri::command]
+async fn herdr_screen(pane: String, lines: u32) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || herdr::screen(&pane, lines)).await.map_err(|e| e.to_string())?
+}
+
+/// Starts an agent in an idle herdr pane. Only from an explicit click.
+#[tauri::command]
+async fn herdr_start(kind: String, name: String, pane: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || herdr::start(&kind, &name, &pane)).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn approval_decision(app: AppHandle, request_id: String, decision: String) {
     recap::record_decision(&app, &request_id, &decision);
@@ -978,6 +996,9 @@ pub fn run() {
             herdr_send,
             herdr_keys,
             herdr_close,
+            herdr_focus,
+            herdr_screen,
+            herdr_start,
             approval_decision,
             approval_answer,
             approval_ack,

@@ -177,6 +177,11 @@ async function tick() {
   }
 }
 
+/** Re-reads herdr now, after an action, instead of waiting for the next poll. */
+export function refreshHerdrNow(): Promise<void> {
+  return IS_TAURI ? tick() : Promise.resolve();
+}
+
 /** Mirrors herdr's agent panes into the island every few seconds. Once per window. */
 export function startHerdrSync() {
   if (timer != null || !IS_TAURI) return;

@@ -334,12 +334,19 @@ export const Bridge = {
   herdrPanes: () => call<unknown>("herdr_panes"),
   /** `herdr agent list`, or null. */
   herdrAgents: () => call<unknown>("herdr_agents"),
-  /** Types a line into a herdr pane. Only from an explicit click. */
-  herdrSend: (pane: string, text: string) => call<unknown>("herdr_send", { pane, text }),
+  // The herdr actions below throw with herdr's own message, shown in the card.
+  /** Types a line into a herdr pane, then Enter. Only from an explicit click. */
+  herdrSend: (pane: string, text: string) => callOrThrow<unknown>("herdr_send", { pane, text }),
   /** Presses keys (`enter`, `esc`, `ctrl+c`…) in a herdr pane. Only from an explicit click. */
-  herdrKeys: (pane: string, keys: string[]) => call<unknown>("herdr_keys", { pane, keys }),
+  herdrKeys: (pane: string, keys: string[]) => callOrThrow<unknown>("herdr_keys", { pane, keys }),
   /** Closes a herdr pane. Only from an explicit click. */
-  herdrClose: (pane: string) => call<unknown>("herdr_close", { pane }),
+  herdrClose: (pane: string) => callOrThrow<unknown>("herdr_close", { pane }),
+  /** Selects a herdr pane. Only from an explicit click. */
+  herdrFocus: (pane: string) => callOrThrow<unknown>("herdr_focus", { pane }),
+  /** The pane's last `lines` lines (10–200), `{ text }`. Read-only. */
+  herdrScreen: (pane: string, lines: number) => callOrThrow<{ text: string }>("herdr_screen", { pane, lines }),
+  /** Starts an agent in an idle shell pane. Only from an explicit click. */
+  herdrStart: (kind: string, name: string, pane: string) => callOrThrow<unknown>("herdr_start", { kind, name, pane }),
 
   approvalDecision: (requestId: string, decision: "allow" | "deny") =>
     call<void>("approval_decision", { requestId, decision }),

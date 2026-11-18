@@ -164,40 +164,66 @@ fn valid_text(value: &str) -> bool {
 
 /// Runs herdr with `args`, stdin closed, for at most TIMEOUT; its stdout as JSON.
 fn run(args: &[&str]) -> Result<Value, String> {
+    let out = exec(args, TIMEOUT)?;
+    serde_json::from_slice(&out).map_err(|e| format!("herdr: bad JSON: {e}"))
+}
+
+fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut out = Vec::new();
+        if let Some(pipe) = pipe {
+            let _ = pipe.take(MAX_OUTPUT).read_to_end(&mut out);
+        }
+        out
+    })
+}
+
+/// Runs herdr with `args`, stdin closed, for at most `timeout`: its stdout on
+/// success, else herdr's own error message (it prints `{"error":…}` on stderr).
+fn exec(args: &[&str], timeout: Duration) -> Result<Vec<u8>, String> {
     if cfg!(windows) {
         // herdr lives in WSL there; only the hook-relayed `focus` reaches it.
         return Err("herdr: not available on this platform".into());
     }
     let mut cmd = Command::new(bin());
-    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = crate::platform::no_console(&mut cmd).spawn().map_err(|e| format!("herdr: {e}"))?;
-    let mut stdout = child.stdout.take().ok_or("herdr: no stdout")?;
     // Read on the side so a full pipe cannot stall the wait below.
-    let reader = std::thread::spawn(move || {
-        let mut out = Vec::new();
-        let _ = (&mut stdout).take(MAX_OUTPUT).read_to_end(&mut out);
-        out
-    });
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
     let start = Instant::now();
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if start.elapsed() < TIMEOUT => std::thread::sleep(Duration::from_millis(15)),
+            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(15)),
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("herdr {}: timed out", args.join(" ")));
+                return Err(format!("herdr {}: timed out", args[..args.len().min(2)].join(" ")));
             }
             Err(e) => return Err(format!("herdr: {e}")),
         }
     };
-    let out = reader.join().map_err(|_| "herdr: reader failed".to_string())?;
-    let json: Value = serde_json::from_slice(&out).map_err(|e| format!("herdr: bad JSON: {e}"))?;
+    let out = stdout.join().map_err(|_| "herdr: reader failed".to_string())?;
+    let err = stderr.join().unwrap_or_default();
     if !status.success() {
-        let message = json.pointer("/error/message").and_then(Value::as_str).unwrap_or("failed");
-        return Err(format!("herdr {}: {message}", args.first().unwrap_or(&"")));
+        return Err(format!("herdr {}: {}", args[..args.len().min(2)].join(" "), error_message(&err, &out)));
     }
-    Ok(json)
+    Ok(out)
+}
+
+/// herdr's `error.message`, from whichever stream carries it; else its first line.
+fn error_message(stderr: &[u8], stdout: &[u8]) -> String {
+    for bytes in [stderr, stdout] {
+        if let Ok(json) = serde_json::from_slice::<Value>(bytes) {
+            if let Some(m) = json.pointer("/error/message").and_then(Value::as_str) {
+                return m.chars().take(300).collect();
+            }
+        }
+    }
+    let text = String::from_utf8_lossy(if stderr.is_empty() { stdout } else { stderr });
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("failed");
+    line.chars().take(300).collect()
 }
 
 fn pane_arg(pane: &str) -> Result<&str, String> {
@@ -237,6 +263,43 @@ pub fn close(pane: &str) -> Result<Value, String> {
     run(&["pane", "close", pane_arg(pane)?])
 }
 
+/// Selects the agent's pane in herdr (`herdr agent focus`), as `focus` does for
+/// a hook session, but by pane id.
+pub fn focus_pane(pane: &str) -> Result<Value, String> {
+    run(&["agent", "focus", pane_arg(pane)?])
+}
+
+pub const SCREEN_LINES: std::ops::RangeInclusive<u32> = 10..=200;
+
+/// The pane's last `lines` lines as plain text (`herdr pane read`), so a
+/// blocked agent's question can be read before it is answered: `{ "text": … }`.
+pub fn screen(pane: &str, lines: u32) -> Result<Value, String> {
+    let n = lines.clamp(*SCREEN_LINES.start(), *SCREEN_LINES.end()).to_string();
+    let out = exec(&["pane", "read", pane_arg(pane)?, "--source", "recent-unwrapped", "--lines", &n], TIMEOUT)?;
+    Ok(serde_json::json!({ "text": String::from_utf8_lossy(&out) }))
+}
+
+/// An agent name or kind: `[a-z][a-z0-9_-]*`, at most 31 characters.
+fn valid_ident(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && value.len() <= 31
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-'))
+}
+
+/// herdr waits up to 30 s for the agent to be ready; a little more here.
+const START_TIMEOUT: Duration = Duration::from_secs(35);
+
+/// Starts an agent of `kind` named `name` in an idle shell pane (`herdr agent start`).
+pub fn start(kind: &str, name: &str, pane: &str) -> Result<Value, String> {
+    if !valid_ident(kind) || !valid_ident(name) {
+        return Err("herdr: invalid agent kind or name".into());
+    }
+    let pane = pane_arg(pane)?;
+    let out = exec(&["agent", "start", name, "--kind", kind, "--pane", pane, "--timeout", "30000"], START_TIMEOUT)?;
+    serde_json::from_slice(&out).map_err(|e| format!("herdr: bad JSON: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +322,42 @@ mod tests {
         assert!(keys("w1:p1", &["--help".to_string()]).is_err());
         assert!(keys("w1:p1", &[]).is_err());
         assert!(close("w1 p1").is_err());
+    }
+
+    #[test]
+    fn agent_names_and_kinds_are_plain_identifiers() {
+        for ok in ["claude", "agy", "reviewer-2", "a", "x_y", &"a".repeat(31)] {
+            assert!(valid_ident(ok), "{ok}");
+        }
+        for bad in ["", "Claude", "2fast", "-x", "_x", "a b", "a;b", "a.b", &"a".repeat(32), "é"] {
+            assert!(!valid_ident(bad), "{bad:?}");
+        }
+        // Refused before anything runs.
+        assert!(start("Claude", "x", "w1:p1").unwrap_err().contains("invalid"));
+        assert!(start("claude", "--help", "w1:p1").unwrap_err().contains("invalid"));
+        assert!(start("claude", "x", "-p").unwrap_err().contains("invalid"));
+        assert!(screen("--all", 40).is_err());
+        assert!(focus_pane("").is_err());
+    }
+
+    #[test]
+    fn herdr_errors_come_from_stderr_json() {
+        let err = br#"{"error":{"code":"pane_not_found","message":"pane w9:p99 not found"}}"#;
+        assert_eq!(error_message(err, b""), "pane w9:p99 not found");
+        assert_eq!(error_message(b"", b"\n  usage: herdr pane\nmore"), "usage: herdr pane");
+        assert_eq!(error_message(b"", b""), "failed");
+    }
+
+    /// Live, read-only: an unknown pane gives herdr's own message. Skipped without herdr.
+    #[test]
+    fn live_unknown_pane_reports_herdrs_message() {
+        if panes().is_err() {
+            eprintln!("herdr not available: skipped");
+            return;
+        }
+        let err = screen("w999:p999", 40).unwrap_err();
+        eprintln!("{err}");
+        assert!(err.contains("not found"), "{err}");
     }
 
     /// Live: prints what herdr reports. Skipped where herdr does not answer.
