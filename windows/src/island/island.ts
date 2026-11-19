@@ -1525,7 +1525,17 @@ export class Island {
       const others = stripTasks(grouping, State.otherTasks);
       const tagged = grouping.headers && !State.settings.showClock && !claudeCompactPillVisible();
       const tags = others.map((t) => (tagged ? pillTag(t) : null));
-      const key = others.map((t, i) => `${t.id}:${tags[i]?.label ?? ""}:${tags[i]?.blocked ?? ""}`).join("|") + `|${tagged}`;
+      // One label per workspace run: the first pill of a group carries it, the
+      // rest keep only their blocked marker, so a workspace name is not repeated
+      // for every session in it.
+      let prevWs: string | null = null;
+      const labelled = tags.map((tag, i) => {
+        const ws = others[i].workspace ?? null;
+        const first = ws !== prevWs;
+        prevWs = ws;
+        return Boolean(tag) && first;
+      });
+      const key = others.map((t, i) => `${t.id}:${labelled[i] ? tags[i]?.label ?? "" : ""}:${tags[i]?.blocked ?? ""}`).join("|") + `|${tagged}`;
       if (this.miniGrid.dataset.key !== key) {
         this.miniGrid.dataset.key = key;
         this.miniGrid.classList.toggle("tagged", tagged);
@@ -1536,7 +1546,7 @@ export class Island {
           const tag = tags[i];
           // A service keeps an empty tag line, so every mini sits on one baseline.
           const label = h("span", { class: "mini-tag" },
-            tag ? h("span", { class: "t", text: tag.label }) : null,
+            tag && labelled[i] ? h("span", { class: "t", text: tag.label }) : null,
             tag?.blocked ? h("i", { class: "blocked" }) : null);
           this.miniGrid.append(h("span", { class: "mini-item" }, label, mini));
         });
