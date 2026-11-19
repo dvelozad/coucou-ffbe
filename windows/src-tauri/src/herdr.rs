@@ -7,7 +7,7 @@
 
 use serde_json::Value;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -129,23 +129,115 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_OUTPUT: u64 = 4 << 20;
 const MAX_TEXT: usize = 4096;
 
-/// HERDR_BIN_PATH when it is a valid path to herdr, else ~/.local/bin/herdr when
-/// it exists (a desktop launch rarely has it on PATH), else `herdr` on PATH.
-fn bin() -> String {
-    if let Ok(path) = std::env::var("HERDR_BIN_PATH") {
-        if valid_bin(&path) {
-            return path;
+/// Where herdr is installed, as absolute paths to try when PATH does not have
+/// it: a desktop launch (and nrodia) often runs with a minimal PATH.
+const CANDIDATES: [&str; 3] = ["/usr/local/bin/herdr", "/usr/bin/herdr", "/opt/homebrew/bin/herdr"];
+
+/// A file this process may run: it exists and has an execute bit.
+fn executable(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else { return false };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// The process environment the resolver reads, passed in so the tests can set
+/// it without touching the real one (Rust tests run in one process, in parallel).
+struct Where<'a> {
+    explicit: Option<&'a str>,  // COUCOU_HERDR_BIN: the user's own path, absolute
+    hook: Option<&'a str>,      // HERDR_BIN_PATH: relayed by the hook, already vetted
+    path: Option<&'a str>,      // PATH
+    home: Option<&'a str>,      // HOME
+}
+
+/// Records `label` and returns the path when it is executable.
+fn pick(tried: &mut Vec<String>, label: String, path: &Path) -> Option<PathBuf> {
+    if executable(path) {
+        Some(path.to_path_buf())
+    } else {
+        tried.push(label);
+        None
+    }
+}
+
+/// The first executable candidate, or Err naming every place that was tried.
+fn locate(where_: &Where) -> Result<PathBuf, String> {
+    let mut tried: Vec<String> = Vec::new();
+
+    if let Some(raw) = where_.explicit {
+        let raw = raw.trim();
+        let p = Path::new(raw);
+        let label = format!("COUCOU_HERDR_BIN={raw} (not an absolute executable)");
+        if p.is_absolute() {
+            if let Some(hit) = pick(&mut tried, label, p) {
+                return Ok(hit);
+            }
+        } else {
+            tried.push(label);
         }
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        let local = Path::new(&home).join(".local/bin/herdr");
-        if let Some(local) = local.to_str().filter(|p| valid_bin(p)) {
-            if Path::new(local).is_file() {
-                return local.to_string();
+    if let Some(raw) = where_.hook {
+        if valid_bin(raw) {
+            let label = format!("HERDR_BIN_PATH={raw} (missing or not executable)");
+            if let Some(hit) = pick(&mut tried, label, Path::new(raw)) {
+                return Ok(hit);
+            }
+        } else {
+            tried.push(format!("HERDR_BIN_PATH={raw} (not a herdr path)"));
+        }
+    }
+    match where_.path {
+        Some(path) => {
+            for dir in path.split(if cfg!(windows) { ';' } else { ':' }) {
+                if dir.is_empty() {
+                    continue;
+                }
+                let candidate = Path::new(dir).join("herdr");
+                let label = format!("{} (PATH)", candidate.display());
+                if let Some(hit) = pick(&mut tried, label, &candidate) {
+                    return Ok(hit);
+                }
             }
         }
+        None => tried.push("PATH (not set)".into()),
     }
-    "herdr".to_string()
+    match where_.home {
+        Some(home) => {
+            let candidate = Path::new(home).join(".local/bin/herdr");
+            let label = format!("{} (HOME)", candidate.display());
+            if let Some(hit) = pick(&mut tried, label, &candidate) {
+                return Ok(hit);
+            }
+        }
+        None => tried.push("$HOME/.local/bin/herdr (HOME not set)".into()),
+    }
+    for raw in CANDIDATES {
+        if let Some(hit) = pick(&mut tried, format!("{raw} (missing or not executable)"), Path::new(raw)) {
+            return Ok(hit);
+        }
+    }
+    Err(format!("herdr: not found. Tried: {}", tried.join("; ")))
+}
+
+/// Resolves herdr once per call, cheapest and most explicit first:
+/// COUCOU_HERDR_BIN, then the hook's HERDR_BIN_PATH, then PATH, then the usual
+/// install locations (with $HOME/.local/bin first). Err lists everything tried.
+fn herdr_bin() -> Result<PathBuf, String> {
+    locate(&Where {
+        explicit: std::env::var("COUCOU_HERDR_BIN").ok().as_deref(),
+        hook: std::env::var("HERDR_BIN_PATH").ok().as_deref(),
+        path: std::env::var("PATH").ok().as_deref(),
+        home: std::env::var("HOME").ok().as_deref(),
+    })
 }
 
 /// A key name as herdr spells them: `enter`, `esc`, `ctrl+c`, `y`, `f5`…
@@ -185,7 +277,8 @@ fn exec(args: &[&str], timeout: Duration) -> Result<Vec<u8>, String> {
         // herdr lives in WSL there; only the hook-relayed `focus` reaches it.
         return Err("herdr: not available on this platform".into());
     }
-    let mut cmd = Command::new(bin());
+    let bin = herdr_bin()?;
+    let mut cmd = Command::new(bin);
     cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = crate::platform::no_console(&mut cmd).spawn().map_err(|e| format!("herdr: {e}"))?;
     // Read on the side so a full pipe cannot stall the wait below.
@@ -351,6 +444,89 @@ mod tests {
         assert_eq!(error_message(err, b""), "pane w9:p99 not found");
         assert_eq!(error_message(b"", b"\n  usage: herdr pane\nmore"), "usage: herdr pane");
         assert_eq!(error_message(b"", b""), "failed");
+    }
+
+    /// A throwaway home with two copies of a fake herdr: at the HOME candidate
+    /// (.local/bin/herdr) and in a directory usable as a PATH entry. `mode`
+    /// decides whether either is actually runnable.
+    fn fake_home(name: &str, mode: u32) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("coucou-herdr-{}-{name}", std::process::id()));
+        for sub in [".local/bin", "path"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+            let path = dir.join(sub).join("herdr");
+            std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            }
+        }
+        let _ = mode;
+        dir
+    }
+
+    #[test]
+    fn coucou_herdr_bin_wins_when_it_is_an_executable() {
+        let mine = fake_home("explicit", 0o755);
+        let other = fake_home("explicit-other", 0o755);
+        let hit = locate(&Where {
+            explicit: mine.join("path/herdr").to_str(),
+            hook: Some("/nope/hook/herdr"),
+            path: Some(other.join("path").to_str().unwrap()),
+            home: Some(other.to_str().unwrap()),
+        });
+        assert_eq!(hit.unwrap(), mine.join("path/herdr"));
+    }
+
+    #[test]
+    fn a_non_executable_relative_or_foreign_candidate_is_rejected() {
+        let plain = fake_home("plain", 0o644);
+        let good = fake_home("plain-good", 0o755);
+        let path = good.join("path").to_str().unwrap().to_string();
+        let plain_exe = plain.join("path/herdr").to_str().unwrap().to_string();
+        let good_exe = good.join("path/herdr");
+        let mut picks = vec![plain_exe.as_str(), "bin/herdr"];
+        // A directory is not a program either.
+        if cfg!(unix) {
+            picks.push("/tmp");
+        }
+        for explicit in picks {
+            let where_ = Where { explicit: Some(explicit), hook: None, path: Some(&path), home: None };
+            // 0o644 is a file, but not runnable: PATH's herdr is taken instead.
+            assert_eq!(locate(&where_).unwrap(), good_exe, "{explicit}");
+        }
+    }
+
+    #[test]
+    fn the_error_names_every_location_tried() {
+        let err = locate(&Where {
+            explicit: Some("/nope/herdr"), hook: Some("/nope/hook/herdr"),
+            path: Some("/nope/bin:/also-nope"), home: Some("/nope/home"),
+        })
+        .unwrap_err();
+        for part in ["COUCOU_HERDR_BIN=/nope/herdr", "HERDR_BIN_PATH=/nope/hook/herdr",
+                     "/nope/bin/herdr", "/also-nope/herdr", "/nope/home/.local/bin/herdr",
+                     "/usr/local/bin/herdr", "/usr/bin/herdr", "/opt/homebrew/bin/herdr",
+                     "herdr: not found"] {
+            assert!(err.contains(part), "{part} missing from {err}");
+        }
+        // A hook value that is not a herdr path is named, not run.
+        let err = locate(&Where { explicit: None, hook: Some("/usr/bin/sh"), path: None, home: None }).unwrap_err();
+        assert!(err.contains("HERDR_BIN_PATH=/usr/bin/sh (not a herdr path)"), "{err}");
+    }
+
+    /// Live: a stripped PATH still finds this machine's herdr through HOME.
+    #[test]
+    fn a_stripped_path_still_finds_herdr() {
+        let home = std::env::var("HOME").ok();
+        let some_home = home.as_deref().unwrap_or("/root");
+        let stripped = Where { explicit: None, hook: None, path: Some("/usr/bin:/bin"), home: Some(some_home) };
+        match locate(&stripped) {
+            Ok(path) => eprintln!("resolved {} with PATH=/usr/bin:/bin", path.display()),
+            Err(e) => eprintln!("no herdr on this machine: {e}"),
+        }
+        // Whatever the machine, the real entry point answers without panicking.
+        let _ = herdr_bin();
     }
 
     /// Live, read-only: an unknown pane gives herdr's own message. Skipped without herdr.
