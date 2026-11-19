@@ -18,7 +18,13 @@ export function characterSetting(value: unknown): CharacterKind {
   return "sprite";
 }
 
-export const DEFAULT_BASE_URL = "http://127.0.0.1:8811";
+// The Mission Control dashboard that serves the party and the sprite sheets.
+// It defaults to this machine's loopback, and a build can point it elsewhere —
+// which is how a Coucou running on another computer reaches bigmsi's dashboard:
+//   VITE_SPRITE_BASE=https://bigmsi.tail500ddf.ts.net:8811 npm run tauri dev
+export const DEFAULT_BASE_URL =
+  (import.meta as ImportMeta & { env?: Record<string, string | undefined> })
+    .env?.VITE_SPRITE_BASE || "http://127.0.0.1:8811";
 const TIMEOUT_MS = 2000;
 
 /** The animations Coucou uses, in the order they are looked for. */
